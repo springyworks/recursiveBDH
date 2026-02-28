@@ -270,6 +270,18 @@ class DoublePendulum {
     const smooth = 0.25;
     const newX = this.originX + smooth * (targetX - this.originX);
     const newY = this.originY + smooth * (targetY - this.originY);
+
+    // --- Swivel inertia: keep joint1 in absolute position when pivot moves ---
+    // The first segment is a free swivel — it has inertia and doesn't
+    // rigidly follow the pivot. Adjust θ1 so the joint stays in place.
+    const dx = newX - this.originX;
+    const dy = newY - this.originY;
+    if (dx * dx + dy * dy > 1e-12) {
+      const relX = this.l1 * Math.sin(this.state[0]) - dx;
+      const relY = this.l1 * Math.cos(this.state[0]) - dy;
+      this.state[0] = Math.atan2(relX, relY);
+    }
+
     const safeDt = Math.max(dt, 0.0005);
     const newVX = (newX - this.prevOriginX) / safeDt;
     const newVY = (newY - this.prevOriginY) / safeDt;
@@ -297,9 +309,10 @@ class DoublePendulum {
     const safeM = Math.abs(M) < 1e-6 ? (M >= 0 ? 1e-6 : -1e-6) : M;
 
     // Non-inertial pseudo-forces from pivot grab-point acceleration
-    // In y-down convention: (g - ay)*sin(θ) - ax*cos(θ)
-    const effG1 = (g - ay) * Math.sin(t1) - ax * Math.cos(t1);
-    const effG2 = (g - ay) * Math.sin(t2) - ax * Math.cos(t2);
+    // In y-down convention: (g - ay)*sin(θ) + ax*cos(θ)
+    // The + sign on ax ensures the pendulum LAGS behind pivot motion (inertia)
+    const effG1 = (g - ay) * Math.sin(t1) + ax * Math.cos(t1);
+    const effG2 = (g - ay) * Math.sin(t2) + ax * Math.cos(t2);
 
     const dw1 = (
       m2 * l1 * w1 * w1 * sd * cd
