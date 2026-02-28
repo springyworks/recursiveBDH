@@ -9,6 +9,8 @@ Update the README.md without so much details ; just desription short ; then how 
 
 Use .venv and .gitignore
 do not do --nohup , no --tail , no --head , no redirect terminal output , you can use tee
+DO NOT publish until i say  so
+
 
 Use this  github repo's
 https://github.com/pathwaycom/bdh as the basis ; use at least 20 BDH's maybe not to big ;; constellation DAG 

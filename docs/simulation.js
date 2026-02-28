@@ -216,11 +216,35 @@ class DoublePendulum {
     this.trailX = []; this.trailY = [];
     this.maxTrail = 250;
     this.energy = 0;
+
+    // Moving origin (pivot point), controlled by the brain
+    this.originX = 0;
+    this.originY = 0;
+    this.originVX = 0;
+    this.originVY = 0;
+    this.originAX = 0;
+    this.originAY = 0;
+    this.originRange = 1.2; // max offset in physics units
+  }
+
+  setOrigin(targetX, targetY, dt) {
+    const smooth = 0.15;
+    const newX = this.originX + smooth * (targetX - this.originX);
+    const newY = this.originY + smooth * (targetY - this.originY);
+    const safeDt = Math.max(dt, 0.001);
+    const newVX = (newX - this.originX) / safeDt;
+    const newVY = (newY - this.originY) / safeDt;
+    this.originAX = clamp((newVX - this.originVX) / safeDt, -50, 50);
+    this.originAY = clamp((newVY - this.originVY) / safeDt, -50, 50);
+    this.originVX = newVX;
+    this.originVY = newVY;
+    this.originX = newX;
+    this.originY = newY;
   }
 
   derivatives(s, tau1, tau2) {
     const [t1, t2, w1, w2] = s;
-    const { m1, m2, l1, l2, g, damping: b } = this;
+    const { m1, m2, l1, l2, g, damping: b, originAX: ax, originAY: ay } = this;
     const delta = t2 - t1;
     const cd = Math.cos(delta), sd = Math.sin(delta);
     let den1 = (m1 + m2) * l1 - m2 * l1 * cd * cd;
@@ -228,10 +252,15 @@ class DoublePendulum {
     den1 = den1 > 0 ? Math.max(den1, 1e-8) : Math.min(den1, -1e-8);
     den2 = den2 > 0 ? Math.max(den2, 1e-8) : Math.min(den2, -1e-8);
 
-    const dw1 = (m2 * l1 * w1 * w1 * sd * cd + m2 * g * Math.sin(t2) * cd
-      + m2 * l2 * w2 * w2 * sd - (m1 + m2) * g * Math.sin(t1) - b * w1 + tau1) / den1;
-    const dw2 = (-m2 * l2 * w2 * w2 * sd * cd + (m1 + m2) * g * Math.sin(t1) * cd
-      - (m1 + m2) * l1 * w1 * w1 * sd - (m1 + m2) * g * Math.sin(t2) - b * w2 + tau2) / den2;
+    // Pivot acceleration modifies effective gravity:
+    // g*sin(θ) → (g+ay)*sin(θ) + ax*cos(θ)
+    const gs1 = (g + ay) * Math.sin(t1) + ax * Math.cos(t1);
+    const gs2 = (g + ay) * Math.sin(t2) + ax * Math.cos(t2);
+
+    const dw1 = (m2 * l1 * w1 * w1 * sd * cd + m2 * gs2 * cd
+      + m2 * l2 * w2 * w2 * sd - (m1 + m2) * gs1 - b * w1 + tau1) / den1;
+    const dw2 = (-m2 * l2 * w2 * w2 * sd * cd + (m1 + m2) * gs1 * cd
+      - (m1 + m2) * l1 * w1 * w1 * sd - (m1 + m2) * gs2 - b * w2 + tau2) / den2;
     return [w1, w2, dw1, dw2];
   }
 
@@ -260,10 +289,10 @@ class DoublePendulum {
 
   getPositions() {
     const [t1, t2] = this.state;
-    const x1 = this.l1 * Math.sin(t1);
-    const y1 = -this.l1 * Math.cos(t1);
+    const x1 = this.originX + this.l1 * Math.sin(t1);
+    const y1 = this.originY + this.l1 * Math.cos(t1);
     const x2 = x1 + this.l2 * Math.sin(t2);
-    const y2 = y1 - this.l2 * Math.cos(t2);
+    const y2 = y1 + this.l2 * Math.cos(t2);
     return [x1, y1, x2, y2];
   }
 
@@ -409,6 +438,17 @@ class Constellation {
         pos[i][1] += cool * dy[i];
       }
     }
+    // Normalize positions to [-0.85, 0.85] for consistent rendering
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of pos) {
+      minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+      minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+    }
+    const rx = (maxX - minX) || 1, ry = (maxY - minY) || 1;
+    for (const p of pos) {
+      p[0] = ((p[0] - minX) / rx - 0.5) * 1.7;
+      p[1] = ((p[1] - minY) / ry - 0.5) * 1.7;
+    }
     return pos;
   }
 
@@ -497,9 +537,24 @@ class Orchestrator {
     this.dim = dim;
     this.tick = 0;
 
-    // Projections (4 → dim, dim → 2)
+    // Projections: pendulum state (4) → node input (dim)
     this.pendToNode = randnArr(4 * dim, 0.1);
-    this.nodeTorque = randnArr(dim * 2, 0.05);
+    // Projections: node output (dim) → origin offsets (4: ox1,oy1,ox2,oy2)
+    this.nodeToOrigin = randnArr(dim * 4, 0.05);
+    // Small torque output (dim → 2 per pendulum)
+    this.nodeTorque = randnArr(dim * 2, 0.02);
+    // Task/feedback signal encoders
+    this.taskEncoder = randnArr(dim, 0.1);
+    this.feedbackEncoder = randnArr(dim, 0.1);
+
+    // Eligibility traces for continuous learning
+    this.originTrace = new Float32Array(dim * 4);
+    this.torqueTrace = new Float32Array(dim * 2);
+    this.traceDecay = 0.92;
+
+    // Control signals
+    this.taskActive = false;
+    this.feedbackValue = 0; // -1 (bad) to +1 (nice), 0 = indifferent
 
     // Metrics history
     this.energyHist = [];
@@ -514,6 +569,8 @@ class Orchestrator {
     this.chaos = 0.1;
     this.simDt = 0.005;
     this.internalSteps = 2;
+    this.originRange = 1.2;
+    this.originGain = 3.0;
   }
 
   step() {
@@ -521,7 +578,7 @@ class Orchestrator {
     const d = this.dim;
     const hubs = this.const.hubIds;
 
-    // 1. Inject pendulum states into hubs
+    // 1. Inject pendulum states + task + feedback into hub nodes
     for (let p = 0; p < this.pends.length; p++) {
       const ps = this.pends[p].state;
       const signal = zeros(d);
@@ -529,6 +586,8 @@ class Orchestrator {
         let s = 0;
         for (let j = 0; j < 4; j++) s += this.pendToNode[j * d + i] * ps[j];
         signal[i] = s * 0.5;
+        if (this.taskActive) signal[i] += this.taskEncoder[i] * 0.3;
+        signal[i] += this.feedbackEncoder[i] * this.feedbackValue * 0.2;
       }
       const ha = hubs[p * 2];
       const hb = hubs[Math.min(p * 2 + 1, hubs.length - 1)];
@@ -541,7 +600,7 @@ class Orchestrator {
       this.const.step(this.coupling, this.threshold, this.noise, this.chaos);
     }
 
-    // 3. Read hub outputs → torques
+    // 3. Read hub outputs → origin offsets + torques → physics
     for (let p = 0; p < this.pends.length; p++) {
       const ha = hubs[p * 2];
       const hb = hubs[Math.min(p * 2 + 1, hubs.length - 1)];
@@ -549,23 +608,96 @@ class Orchestrator {
       for (let i = 0; i < d; i++) {
         combined[i] = (this.const.outputs[ha][i] + this.const.outputs[hb][i]) * 0.5;
       }
-      // Project to 2 torques
+
+      // Project to origin offsets
+      let ox = 0, oy = 0;
+      for (let i = 0; i < d; i++) {
+        ox += this.nodeToOrigin[i * 4 + p * 2] * combined[i];
+        oy += this.nodeToOrigin[i * 4 + p * 2 + 1] * combined[i];
+      }
+      ox = Math.tanh(ox * this.originGain) * this.originRange;
+      oy = Math.tanh(oy * this.originGain) * this.originRange;
+
+      // Update eligibility traces
+      for (let i = 0; i < d; i++) {
+        this.originTrace[i * 4 + p * 2] =
+          this.traceDecay * this.originTrace[i * 4 + p * 2]
+          + (1 - this.traceDecay) * combined[i] * ox;
+        this.originTrace[i * 4 + p * 2 + 1] =
+          this.traceDecay * this.originTrace[i * 4 + p * 2 + 1]
+          + (1 - this.traceDecay) * combined[i] * oy;
+      }
+
+      // Move the pendulum pivot (physics acceleration effects)
+      this.pends[p].setOrigin(ox, oy, this.simDt);
+
+      // Project to small torques
       let tau1 = 0, tau2 = 0;
       for (let i = 0; i < d; i++) {
         tau1 += this.nodeTorque[i * 2] * combined[i];
         tau2 += this.nodeTorque[i * 2 + 1] * combined[i];
       }
-      tau1 *= 2; tau2 *= 2;
+      tau1 *= 0.5; tau2 *= 0.5;
 
-      // Sub-step pendulum
+      for (let i = 0; i < d; i++) {
+        this.torqueTrace[i * 2] =
+          this.traceDecay * this.torqueTrace[i * 2]
+          + (1 - this.traceDecay) * combined[i] * tau1;
+        this.torqueTrace[i * 2 + 1] =
+          this.traceDecay * this.torqueTrace[i * 2 + 1]
+          + (1 - this.traceDecay) * combined[i] * tau2;
+      }
+
+      // Sub-step pendulum physics
       const nsub = 4, subDt = this.simDt / nsub;
       for (let ss = 0; ss < nsub; ss++) {
         this.pends[p].step(subDt, tau1, tau2);
       }
     }
 
-    // 4. Metrics
+    // 4. Continuous learning
+    this._learnFromReward();
+
+    // 5. Metrics
     this._recordMetrics();
+  }
+
+  _computeTaskReward() {
+    // Balance to top: reward is higher when pendulum tips are above pivot
+    // cos(θ) = 1 when hanging down (θ=0), -1 when inverted (θ=π)
+    // Reward = -cos(θ) → max when inverted
+    let r = 0;
+    for (const pend of this.pends) {
+      const [t1, t2] = pend.state;
+      r += (-Math.cos(t1) - Math.cos(t2));
+    }
+    return r / (2 * this.pends.length); // normalized to [-1, 1]
+  }
+
+  _learnFromReward() {
+    let reward = this.feedbackValue;
+    if (this.taskActive) {
+      reward += this._computeTaskReward() * 0.5;
+    }
+    if (Math.abs(reward) < 0.01) return;
+
+    const lr = 0.0003 * reward;
+    const d = this.dim;
+
+    // Update origin projection weights
+    for (let i = 0; i < d * 4; i++) {
+      this.nodeToOrigin[i] += lr * this.originTrace[i];
+      this.nodeToOrigin[i] = clamp(this.nodeToOrigin[i], -2, 2);
+    }
+    // Update torque projection weights
+    for (let i = 0; i < d * 2; i++) {
+      this.nodeTorque[i] += lr * 0.5 * this.torqueTrace[i];
+      this.nodeTorque[i] = clamp(this.nodeTorque[i], -2, 2);
+    }
+    // Modulate constellation Hebbian learning
+    if (reward > 0) {
+      this.const._hebbianUpdate(0.002 * reward);
+    }
   }
 
   _recordMetrics() {

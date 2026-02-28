@@ -10,15 +10,30 @@ body { background: #0a0a0f; color: #ccc; font-family: 'Segoe UI', monospace; ove
 #main-canvas { display: block; width: 100vw; height: 100vh; }
 #controls {
   position: fixed; bottom: 0; left: 0; right: 0;
-  background: rgba(10,10,20,0.92); padding: 8px 16px;
-  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  background: rgba(10,10,20,0.92); padding: 6px 10px;
+  display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center;
   border-top: 1px solid #222;
   z-index: 10;
 }
-.slider-group { display: flex; align-items: center; gap: 6px; }
-.slider-group label { font-size: 11px; color: #888; min-width: 70px; }
-.slider-group input[type=range] { width: 120px; accent-color: #ff6b6b; }
-.slider-group .val { font-size: 10px; color: #ff6b6b; min-width: 35px; }
+.slider-group { display: flex; align-items: center; gap: 4px; }
+.slider-group label { font-size: 11px; color: #888; min-width: 50px; }
+.slider-group input[type=range] { width: 100px; accent-color: #ff6b6b; height: 28px; }
+.slider-group .val { font-size: 10px; color: #ff6b6b; min-width: 30px; }
+@media (max-width: 800px) {
+  #controls { padding: 4px 6px; gap: 4px 6px; }
+  .slider-group label { font-size: 10px; min-width: 40px; }
+  .slider-group input[type=range] { width: 70px; height: 32px; }
+  .slider-group .val { font-size: 9px; min-width: 24px; }
+  #btn-task { padding: 6px 10px; font-size: 12px; }
+  #hud { font-size: 9px; }
+}
+#btn-task {
+  background: #1a1a2a; color: #ff922b; border: 1px solid #333;
+  padding: 4px 14px; cursor: pointer; font-size: 11px; font-weight: bold;
+  border-radius: 3px; transition: all 0.2s;
+}
+#btn-task:hover { border-color: #ffd43b; }
+#btn-task.active { background: #332800; color: #ffd43b; border-color: #ffd43b; }
 #hud {
   position: fixed; top: 8px; left: 12px;
   font-size: 11px; color: #555; z-index: 10;
@@ -63,6 +78,19 @@ body { background: #0a0a0f; color: #ccc; font-family: 'Segoe UI', monospace; ove
     <label>Speed</label>
     <input type="range" id="sl-speed" min="1" max="10" step="1" value="2">
     <span class="val" id="v-speed">2</span>
+  </div>
+  <div class="slider-group">
+    <label style="color: #51cf66;">Org.Gain</label>
+    <input type="range" id="sl-origain" min="0.5" max="10" step="0.1" value="3" style="accent-color: #51cf66;">
+    <span class="val" id="v-origain" style="color: #51cf66;">3.0</span>
+  </div>
+  <div class="slider-group" style="border-left: 1px solid #333; padding-left: 8px;">
+    <button id="btn-task">BALANCE</button>
+  </div>
+  <div class="slider-group" style="flex-grow: 1;">
+    <label style="color: #ffd43b;">Feedback</label>
+    <input type="range" id="sl-feedback" min="-1" max="1" step="0.01" value="0" style="width: 180px; accent-color: #ffd43b;">
+    <span class="val" id="v-feedback" style="color: #ffd43b;">0.00</span>
   </div>
 </div>
 <script src="simulation.js"></script>

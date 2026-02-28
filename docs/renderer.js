@@ -12,11 +12,11 @@ class Renderer {
     this.resize();
     window.addEventListener('resize', () => this.resize());
 
-    // Layout regions (fractions of canvas)
-    // Left half: pendulum (top), energy (bottom)
-    // Right half: constellation (top), waterfall + pulse (bottom)
-    this.waterfallData = []; // rows of activation arrays
+    this.waterfallData = [];
     this.maxWaterfall = 100;
+    // Phase portrait trail history
+    this.phaseTrails = [];
+    this.maxPhaseTrail = 200;
   }
 
   resize() {
@@ -49,25 +49,29 @@ class Renderer {
     if (this.waterfallData.length > this.maxWaterfall)
       this.waterfallData.shift();
 
-    // Panel divisions
-    const midX = W * 0.48;
-    const midY = H * 0.58;
+    // Panel divisions — bigger phase portrait, balanced layout
+    const midX = W * 0.5;
+    const midY = H * 0.55;
+    const bh = H - midY;
+    const pw0 = W * 0.27, pw1 = W * 0.23, pw2 = W * 0.32, pw3 = W * 0.18;
 
     // Draw panels
     this._drawPendulums(ctx, 0, 0, midX, midY);
     this._drawConstellation(ctx, midX, 0, W - midX, midY);
-    this._drawEnergy(ctx, 0, midY, midX * 0.6, H - midY);
-    this._drawPhasePortrait(ctx, midX * 0.6, midY, midX * 0.4, H - midY);
-    this._drawWaterfall(ctx, midX, midY, (W - midX) * 0.6, H - midY);
-    this._drawPulseRates(ctx, midX + (W - midX) * 0.6, midY, (W - midX) * 0.4, H - midY);
+    this._drawEnergy(ctx, 0, midY, pw0, bh);
+    this._drawPhasePortrait(ctx, pw0, midY, pw1, bh);
+    this._drawWaterfall(ctx, pw0 + pw1, midY, pw2, bh);
+    this._drawPulseRates(ctx, pw0 + pw1 + pw2, midY, pw3, bh);
 
     // Panel borders
     ctx.strokeStyle = '#1a1a2a';
     ctx.lineWidth = 1;
     ctx.strokeRect(0, 0, midX, midY);
     ctx.strokeRect(midX, 0, W - midX, midY);
-    ctx.strokeRect(0, midY, midX, H - midY);
-    ctx.strokeRect(midX, midY, W - midX, H - midY);
+    ctx.strokeRect(0, midY, pw0, bh);
+    ctx.strokeRect(pw0, midY, pw1, bh);
+    ctx.strokeRect(pw0 + pw1, midY, pw2, bh);
+    ctx.strokeRect(pw0 + pw1 + pw2, midY, pw3, bh);
   }
 
   _drawPendulums(ctx, ox, oy, w, h) {
@@ -76,28 +80,41 @@ class Renderer {
     ctx.rect(ox, oy, w, h);
     ctx.clip();
 
-    // Title
+    // Title (offset to avoid HUD overlap)
     ctx.fillStyle = '#ff6b6b';
     ctx.font = '12px monospace';
-    ctx.fillText('Double Pendulum Ballet', ox + 10, oy + 18);
+    ctx.fillText('Double Pendulum Ballet', ox + 10, oy + 32);
 
     const cx = ox + w / 2;
-    const cy = oy + h * 0.35;
-    const scale = Math.min(w, h) * 0.2;
-    const offsets = [-w * 0.2, w * 0.2];
+    const cy = oy + h * 0.45;
+    const scale = Math.min(w, h) * 0.16;
+    const offsets = [-w * 0.22, w * 0.22];
     const colors = [['#ff6b6b', '#ff8787', '#ffa8a850'], ['#74c0fc', '#91d5ff', '#b2e0ff50']];
 
     for (let p = 0; p < this.orch.pends.length; p++) {
       const pend = this.orch.pends[p];
       const pcx = cx + offsets[p];
+      const pcy = cy;
       const [c1, c2, c3] = colors[p];
 
-      // Draw trail
+      // Pivot position (origin controlled by brain)
+      const pivotX = pcx + pend.originX * scale;
+      const pivotY = pcy + pend.originY * scale;
+
+      // Draw origin range box
+      const rangeBox = pend.originRange * scale;
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(pcx - rangeBox, pcy - rangeBox, rangeBox * 2, rangeBox * 2);
+      ctx.setLineDash([]);
+
+      // Draw trail (tip of second arm)
       if (pend.trailX.length > 2) {
         ctx.beginPath();
         for (let i = 0; i < pend.trailX.length; i++) {
           const tx = pcx + pend.trailX[i] * scale;
-          const ty = cy + pend.trailY[i] * scale;
+          const ty = pcy + pend.trailY[i] * scale;
           if (i === 0) ctx.moveTo(tx, ty);
           else ctx.lineTo(tx, ty);
         }
@@ -106,14 +123,14 @@ class Renderer {
         ctx.stroke();
       }
 
-      // Draw pendulum
+      // Draw pendulum from pivot
       const [x1, y1, x2, y2] = pend.getPositions();
-      const sx1 = pcx + x1 * scale, sy1 = cy + y1 * scale;
-      const sx2 = pcx + x2 * scale, sy2 = cy + y2 * scale;
+      const sx1 = pcx + x1 * scale, sy1 = pcy + y1 * scale;
+      const sx2 = pcx + x2 * scale, sy2 = pcy + y2 * scale;
 
       // Rods
       ctx.beginPath();
-      ctx.moveTo(pcx, cy);
+      ctx.moveTo(pivotX, pivotY);
       ctx.lineTo(sx1, sy1);
       ctx.strokeStyle = c1;
       ctx.lineWidth = 3;
@@ -126,12 +143,19 @@ class Renderer {
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
-      // Joints
+      // Pivot crosshair
       ctx.beginPath();
-      ctx.arc(pcx, cy, 4, 0, Math.PI * 2);
+      ctx.moveTo(pivotX - 6, pivotY); ctx.lineTo(pivotX + 6, pivotY);
+      ctx.moveTo(pivotX, pivotY - 6); ctx.lineTo(pivotX, pivotY + 6);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(pivotX, pivotY, 3, 0, Math.PI * 2);
       ctx.fillStyle = '#fff';
       ctx.fill();
 
+      // Joint 1
       ctx.beginPath();
       ctx.arc(sx1, sy1, 7, 0, Math.PI * 2);
       ctx.fillStyle = c1;
@@ -140,6 +164,7 @@ class Renderer {
       ctx.lineWidth = 0.5;
       ctx.stroke();
 
+      // Joint 2 (tip)
       ctx.beginPath();
       ctx.arc(sx2, sy2, 5, 0, Math.PI * 2);
       ctx.fillStyle = c2;
@@ -163,7 +188,7 @@ class Renderer {
 
     const c = this.orch.const;
     const cx = ox + w / 2, cy = oy + h / 2 + 10;
-    const sc = Math.min(w, h) * 0.38;
+    const sc = Math.min(w, h) * 0.42;
 
     // Find activation range
     let maxAct = 0.01;
@@ -283,20 +308,44 @@ class Renderer {
     ctx.fillText('Hub Phase Portrait', ox + 8, oy + 14);
 
     const c = this.orch.const;
-    const cx = ox + w / 2, cy = oy + h / 2 + 8;
+    const cxp = ox + w / 2, cyp = oy + h / 2 + 8;
     const sc = Math.min(w, h) * 0.35;
     const colors = ['#ff6b6b', '#51cf66', '#74c0fc', '#ffd43b'];
 
+    // Record current hub positions
+    const frame = [];
     for (let h2 = 0; h2 < Math.min(c.hubIds.length, 4); h2++) {
       const hub = c.hubIds[h2];
       const out = c.outputs[hub];
-      // Use first 2 dims as x,y
-      const px = cx + out[0] * sc;
-      const py = cy + out[1] * sc;
+      frame.push([out[0], out[1]]);
+    }
+    this.phaseTrails.push(frame);
+    if (this.phaseTrails.length > this.maxPhaseTrail)
+      this.phaseTrails.shift();
+
+    // Draw trails
+    for (let h2 = 0; h2 < frame.length; h2++) {
       ctx.beginPath();
-      ctx.arc(px, py, 2, 0, Math.PI * 2);
-      ctx.fillStyle = colors[h2];
-      ctx.fill();
+      for (let t = 0; t < this.phaseTrails.length; t++) {
+        const pt = this.phaseTrails[t][h2];
+        if (!pt) continue;
+        const px = cxp + pt[0] * sc;
+        const py = cyp + pt[1] * sc;
+        if (t === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = colors[h2] + '60';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+
+      // Current position (bright dot)
+      const cur = frame[h2];
+      if (cur) {
+        ctx.beginPath();
+        ctx.arc(cxp + cur[0] * sc, cyp + cur[1] * sc, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = colors[h2];
+        ctx.fill();
+      }
     }
     ctx.restore();
   }

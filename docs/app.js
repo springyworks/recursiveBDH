@@ -27,6 +27,28 @@
     });
   }
 
+  // Task button
+  const taskBtn = document.getElementById('btn-task');
+  taskBtn.addEventListener('click', () => {
+    orch.taskActive = !orch.taskActive;
+    taskBtn.classList.toggle('active', orch.taskActive);
+    taskBtn.textContent = orch.taskActive ? 'BALANCE \u25b6' : 'BALANCE';
+  });
+
+  // Feedback slider
+  const fbSlider = document.getElementById('sl-feedback');
+  const fbVal = document.getElementById('v-feedback');
+  fbSlider.addEventListener('input', () => {
+    fbVal.textContent = parseFloat(fbSlider.value).toFixed(2);
+  });
+
+  // Origin gain slider
+  const ogSlider = document.getElementById('sl-origain');
+  const ogVal = document.getElementById('v-origain');
+  ogSlider.addEventListener('input', () => {
+    ogVal.textContent = parseFloat(ogSlider.value).toFixed(1);
+  });
+
   // Build simulation
   const DIM = 16;  // State dimension (lighter for web)
   const constellation = new Constellation(20, 5, DIM, 3);
@@ -61,6 +83,8 @@
     orch.threshold = parseFloat(sliders.threshold.el.value);
     orch.chaos = parseFloat(sliders.chaos.el.value);
     orch.noise = parseFloat(sliders.noise.el.value);
+    orch.feedbackValue = parseFloat(fbSlider.value);
+    orch.originGain = parseFloat(document.getElementById('sl-origain').value);
     const speed = parseInt(sliders.speed.el.value);
 
     // Simulation steps
@@ -86,7 +110,9 @@
     hudText.textContent =
       `tick=${orch.tick} | ${fps}fps | ${stepTime.toFixed(1)}ms/frame | ` +
       `nodes=${constellation.nTotal} | edges=${constellation.edges.length} | ` +
-      `coupling=${orch.coupling.toFixed(2)} chaos=${orch.chaos.toFixed(2)}`;
+      `coupling=${orch.coupling.toFixed(2)} chaos=${orch.chaos.toFixed(2)}` +
+      (orch.taskActive ? ' | TASK: BALANCE' : '') +
+      (Math.abs(orch.feedbackValue) > 0.05 ? ` | fb=${orch.feedbackValue.toFixed(2)}` : '');
 
     requestAnimationFrame(loop);
   }
