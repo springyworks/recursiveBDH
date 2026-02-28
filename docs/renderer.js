@@ -329,7 +329,6 @@ class Renderer {
 
     const c = this.orch.const;
     const cxp = ox + w / 2, cyp = oy + h / 2 + 8;
-    const sc = Math.min(w, h) * 0.35;
     const colors = ['#ff6b6b', '#51cf66', '#74c0fc', '#ffd43b'];
 
     // Record current hub positions
@@ -342,6 +341,28 @@ class Renderer {
     this.phaseTrails.push(frame);
     if (this.phaseTrails.length > this.maxPhaseTrail)
       this.phaseTrails.shift();
+
+    // --- Data-driven autoscale: find extent of all trail points ---
+    let maxExt = 0.001;
+    for (let t = 0; t < this.phaseTrails.length; t++) {
+      for (let h2 = 0; h2 < this.phaseTrails[t].length; h2++) {
+        const pt = this.phaseTrails[t][h2];
+        if (!pt) continue;
+        const ax = Math.abs(pt[0]), ay = Math.abs(pt[1]);
+        if (ax > maxExt) maxExt = ax;
+        if (ay > maxExt) maxExt = ay;
+      }
+    }
+    // Scale so data fills ~80% of panel (symmetric)
+    const sc = Math.min(w, h) * 0.38 / maxExt;
+
+    // Faint axis cross
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(ox + 8, cyp); ctx.lineTo(ox + w - 8, cyp);
+    ctx.moveTo(cxp, oy + 28); ctx.lineTo(cxp, oy + h - 8);
+    ctx.stroke();
 
     // Draw trails
     for (let h2 = 0; h2 < frame.length; h2++) {
@@ -362,7 +383,7 @@ class Renderer {
       const cur = frame[h2];
       if (cur) {
         ctx.beginPath();
-        ctx.arc(cxp + cur[0] * sc, cyp + cur[1] * sc, 3.5, 0, Math.PI * 2);
+        ctx.arc(cxp + cur[0] * sc, cyp + cur[1] * sc, 4, 0, Math.PI * 2);
         ctx.fillStyle = colors[h2];
         ctx.fill();
       }
