@@ -1,7 +1,11 @@
 {
+  "version": 1,
+  "updatedAt": "2026-02-28T17:58:18.310Z",
   "exclusions": [
-    ".vscode"
-  ],
-  "updatedAt": "2026-02-28T10:29:56.056Z",
-  "version": 1
+    ".vscode",
+    ".git",
+    "logs",
+    "bin",
+    "__pycache__"
+  ]
 }

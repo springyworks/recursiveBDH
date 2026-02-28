@@ -10,6 +10,10 @@ See [docs/arch.mermaid](docs/arch.mermaid) for the full source.
 
 **Live demo:** [springyworks.github.io/recursiveBDH](https://springyworks.github.io/recursiveBDH/)
 
+## Demo GIF
+
+![Screencast Demo](docs/screencast.gif)
+
 ## Run locally
 
 ```bash

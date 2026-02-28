@@ -60,7 +60,7 @@
   const dampSlider = document.getElementById('sl-damp');
   const dampVal = document.getElementById('v-damp');
   dampSlider.addEventListener('input', () => {
-    dampVal.textContent = parseFloat(dampSlider.value).toFixed(3);
+    dampVal.textContent = parseInt(dampSlider.value) + '%';
   });
 
   // Adrenaline slider
@@ -76,6 +76,29 @@
   let autoRewardEMA = 0;
   let autoTick = 0;
   let autoPrevErr = [0, 0, 0, 0]; // PD errors for θ1,θ2 per pendulum
+
+  // Monte Carlo slider tuning state
+  const mcSliders = [
+    { el: sliders.coupling.el, vEl: sliders.coupling.vEl, min: 0.05, max: 1.5, fmt: v => v.toFixed(2), scale: 0.06 },
+    { el: sliders.threshold.el, vEl: sliders.threshold.vEl, min: 0.02, max: 0.8, fmt: v => v.toFixed(2), scale: 0.04 },
+    { el: sliders.chaos.el, vEl: sliders.chaos.vEl, min: 0, max: 0.6, fmt: v => v.toFixed(2), scale: 0.04 },
+    { el: sliders.noise.el, vEl: sliders.noise.vEl, min: 0.002, max: 0.3, fmt: v => v.toFixed(3), scale: 0.015 },
+    { el: ogSlider, vEl: ogVal, min: 0.5, max: 10, fmt: v => v.toFixed(1), scale: 0.5 },
+    { el: massSlider, vEl: massVal, min: 0.2, max: 5, fmt: v => v.toFixed(1), scale: 0.15 },
+    { el: dampSlider, vEl: dampVal, min: 0, max: 100, fmt: v => Math.round(v) + '%', scale: 4 },
+    { el: adrSlider, vEl: adrVal, min: 0.1, max: 2, fmt: v => v.toFixed(2), scale: 0.08 },
+  ];
+  let mcTrialIdx = -1;       // which slider is being tested (-1 = idle)
+  let mcPrevValue = 0;       // value before the nudge
+  let mcRewardBefore = 0;    // reward EMA snapshot before trial
+  let mcObserveCountdown = 0; // frames left to observe
+  const MC_OBSERVE_FRAMES = 60; // ~1 second at 60fps to observe effect
+  // Track which sliders user has manually touched — never auto-tune those
+  const mcUserLocked = new Set();
+  for (const s of mcSliders) {
+    s.el.addEventListener('input', () => { mcUserLocked.add(s.el); });
+  }
+
   autoBtn.addEventListener('click', () => {
     autoMode = !autoMode;
     autoBtn.classList.toggle('active', autoMode);
@@ -182,58 +205,41 @@
         }
       }
 
-      // --- Slider auto-tuning every 20 frames ---
-      if (autoTick % 20 === 0) {
-        const nudge = () => (Math.random() - 0.5) * 0.015;
-        const improving = autoRewardEMA > -0.3;
-
-        // Coupling → moderate (0.4-0.9)
-        let cp = parseFloat(sliders.coupling.el.value);
-        cp = Math.max(0.15, Math.min(1.2, cp + nudge() + (improving ? 0.003 : -0.003)));
-        sliders.coupling.el.value = cp;
-        sliders.coupling.vEl.textContent = cp.toFixed(2);
-
-        // Threshold → lower when struggling
-        let th = parseFloat(sliders.threshold.el.value);
-        th = Math.max(0.05, Math.min(0.6, th + nudge() + (improving ? 0.002 : -0.006)));
-        sliders.threshold.el.value = th;
-        sliders.threshold.vEl.textContent = th.toFixed(2);
-
-        // Chaos → explore when bad, calm down when good
-        let ch = parseFloat(sliders.chaos.el.value);
-        ch = Math.max(0, Math.min(0.5, ch + nudge() + (autoRewardEMA < -0.5 ? 0.008 : -0.004)));
-        sliders.chaos.el.value = ch;
-        sliders.chaos.vEl.textContent = ch.toFixed(2);
-
-        // Noise
-        let ns = parseFloat(sliders.noise.el.value);
-        ns = Math.max(0.005, Math.min(0.15, ns + nudge() * 0.2));
-        sliders.noise.el.value = ns;
-        sliders.noise.vEl.textContent = ns.toFixed(3);
-
-        // Origin gain → increase when doing well
-        let og = parseFloat(ogSlider.value);
-        og = Math.max(1.5, Math.min(7, og + nudge() * 3 + (improving ? 0.03 : -0.02)));
-        ogSlider.value = og;
-        ogVal.textContent = og.toFixed(1);
-
-        // Mass → lighter is easier to balance
-        let ms = parseFloat(massSlider.value);
-        ms = Math.max(0.3, Math.min(3, ms + nudge() + (improving ? -0.005 : -0.01)));
-        massSlider.value = ms;
-        massVal.textContent = ms.toFixed(1);
-
-        // Damping → a bit of damping helps stability
-        let dp = parseFloat(dampSlider.value);
-        dp = Math.max(0.001, Math.min(0.08, dp + nudge() * 0.05 + (improving ? 0.0005 : 0.001)));
-        dampSlider.value = dp;
-        dampVal.textContent = dp.toFixed(3);
-
-        // Adrenaline → ramp up when learning, calm when stable
-        let ad = parseFloat(adrSlider.value);
-        ad = Math.max(0.2, Math.min(1.8, ad + nudge() + (improving ? 0.005 : 0.01)));
-        adrSlider.value = ad;
-        adrVal.textContent = ad.toFixed(2);
+      // --- Monte Carlo slider tuning: nudge ONE random slider, observe, keep or revert ---
+      if (mcTrialIdx >= 0) {
+        // Observing a trial in progress
+        mcObserveCountdown--;
+        if (mcObserveCountdown <= 0) {
+          // Trial ended — did reward improve?
+          const improved = autoRewardEMA > mcRewardBefore + 0.005;
+          if (!improved) {
+            // Revert the slider
+            const s = mcSliders[mcTrialIdx];
+            s.el.value = mcPrevValue;
+            s.vEl.textContent = s.fmt(mcPrevValue);
+          }
+          mcTrialIdx = -1; // done, ready for next trial
+        }
+      } else if (autoTick % 10 === 0) {
+        // Pick a random unlocked slider to nudge
+        const candidates = mcSliders
+          .map((s, i) => ({ s, i }))
+          .filter(({ s }) => !mcUserLocked.has(s.el));
+        if (candidates.length > 0) {
+          const pick = candidates[Math.floor(Math.random() * candidates.length)];
+          const s = pick.s;
+          mcTrialIdx = pick.i;
+          mcPrevValue = parseFloat(s.el.value);
+          mcRewardBefore = autoRewardEMA;
+          // Random nudge (Gaussian-ish via Box-Muller)
+          const u1 = Math.random(), u2 = Math.random();
+          const gauss = Math.sqrt(-2 * Math.log(u1 + 1e-12)) * Math.cos(2 * Math.PI * u2);
+          let newVal = mcPrevValue + gauss * s.scale;
+          newVal = Math.max(s.min, Math.min(s.max, newVal));
+          s.el.value = newVal;
+          s.vEl.textContent = s.fmt(newVal);
+          mcObserveCountdown = MC_OBSERVE_FRAMES;
+        }
       }
     }
 

@@ -263,6 +263,11 @@ class DoublePendulum {
     this.originAX = 0;
     this.originAY = 0;
     this.originRange = 1.5;
+
+    // Mouse-drag state (user can grab & sling the pivot)
+    this.mouseDragging = false;
+    this.mouseOriginX = 0;
+    this.mouseOriginY = 0;
   }
 
   setOrigin(targetX, targetY, dt) {
@@ -681,10 +686,20 @@ class Orchestrator {
     const hubs = this.const.hubIds;
 
     // 1. Apply mass/damping from sliders to pendulums
+    // Slider is 0-100 (percent), mapped logarithmically to physics damping:
+    //   0 → 0,  1 → 0.005,  25 → 0.07,  50 → 0.5,  75 → 1.8,  100 → 5.0
+    const rawDamp = this.pendDamping; // 0-100 from slider
+    const physicsDamp = rawDamp <= 0 ? 0 : 5.0 * (Math.pow(10, rawDamp / 50) - 1) / 99;
     for (const pend of this.pends) {
       pend.m1 = this.pendMass;
       pend.m2 = this.pendMass * 0.667;
-      pend.baseDamping = this.pendDamping;
+      pend.baseDamping = physicsDamp;
+      // Extra damping boost during mouse drag (3x base, min 0.5)
+      if (pend.mouseDragging) {
+        pend.damping = Math.max(0.5, physicsDamp * 3);
+      } else {
+        pend.damping = physicsDamp;
+      }
     }
 
     // 2. Inject pendulum states + task + feedback into hub nodes
@@ -749,7 +764,14 @@ class Orchestrator {
       }
 
       // Move the pendulum pivot (physics acceleration effects)
-      this.pends[p].setOrigin(ox, oy, this.simDt);
+      // Mouse override: if user is dragging this pivot, use mouse target instead of brain
+      if (this.pends[p].mouseDragging) {
+        const mx = clamp(this.pends[p].mouseOriginX, -this.originRange, this.originRange);
+        const my = clamp(this.pends[p].mouseOriginY, -this.originRange, this.originRange);
+        this.pends[p].setOrigin(mx, my, this.simDt);
+      } else {
+        this.pends[p].setOrigin(ox, oy, this.simDt);
+      }
 
       // Elbow torque only — first joint is a free swivel (no motor)
       let tau2 = 0;
@@ -892,7 +914,9 @@ class Orchestrator {
       const excess = Math.min(1, (this.erraticIndex - 0.4) / 0.4);
       this._erraticDamp = 1 - 0.5 * excess;
       for (const pend of this.pends) {
-        pend.damping = pend.baseDamping + 0.08 * excess;
+        if (!pend.mouseDragging) {
+          pend.damping = pend.baseDamping + 0.5 * excess;
+        }
       }
     } else {
       this._erraticDamp += 0.1 * (1 - this._erraticDamp);

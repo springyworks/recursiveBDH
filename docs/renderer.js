@@ -17,6 +17,102 @@ class Renderer {
     // Phase portrait trail history
     this.phaseTrails = [];
     this.maxPhaseTrail = 200;
+
+    // Mouse-drag interaction for pendulum pivots
+    this._pendPanelGeom = null; // cached every frame
+    this._dragPendIdx = -1;     // which pendulum is being dragged (-1 = none)
+    this._mouseX = 0;
+    this._mouseY = 0;
+    this._hoverPendIdx = -1;    // pendulum pivot the cursor is near
+    this._setupMouseHandlers();
+  }
+
+  _setupMouseHandlers() {
+    const c = this.canvas;
+    c.addEventListener('mousemove', (e) => this._onMouseMove(e));
+    c.addEventListener('mousedown', (e) => this._onMouseDown(e));
+    c.addEventListener('mouseup',   (e) => this._onMouseUp(e));
+    c.addEventListener('mouseleave',(e) => this._onMouseUp(e));
+    // Touch support
+    c.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      this._onMouseMove(t);
+      this._onMouseDown(t);
+    }, { passive: false });
+    c.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      this._onMouseMove(e.touches[0]);
+    }, { passive: false });
+    c.addEventListener('touchend', (e) => { this._onMouseUp(e); });
+  }
+
+  _screenToSim(sx, sy, pendIdx) {
+    const g = this._pendPanelGeom;
+    if (!g) return [0, 0];
+    const pcx = g.cx + g.offsets[pendIdx];
+    const pcy = g.cy;
+    return [(sx - pcx) / g.scale, (sy - pcy) / g.scale];
+  }
+
+  _simToScreen(simX, simY, pendIdx) {
+    const g = this._pendPanelGeom;
+    if (!g) return [0, 0];
+    const pcx = g.cx + g.offsets[pendIdx];
+    const pcy = g.cy;
+    return [pcx + simX * g.scale, pcy + simY * g.scale];
+  }
+
+  _hitTestPivots(sx, sy) {
+    // Returns pendulum index if cursor is near its pivot, else -1
+    const g = this._pendPanelGeom;
+    if (!g) return -1;
+    const hitR = 18; // px radius for grab zone
+    for (let p = 0; p < this.orch.pends.length; p++) {
+      const pend = this.orch.pends[p];
+      const [px, py] = this._simToScreen(pend.originX, pend.originY, p);
+      const dx = sx - px, dy = sy - py;
+      if (dx * dx + dy * dy < hitR * hitR) return p;
+    }
+    return -1;
+  }
+
+  _onMouseMove(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    this._mouseX = (e.clientX || e.pageX) - rect.left;
+    this._mouseY = (e.clientY || e.pageY) - rect.top;
+    this._hoverPendIdx = this._hitTestPivots(this._mouseX, this._mouseY);
+
+    if (this._dragPendIdx >= 0) {
+      const [sx, sy] = this._screenToSim(this._mouseX, this._mouseY, this._dragPendIdx);
+      const pend = this.orch.pends[this._dragPendIdx];
+      pend.mouseOriginX = sx;
+      pend.mouseOriginY = sy;
+    }
+    // Cursor style
+    this.canvas.style.cursor =
+      this._dragPendIdx >= 0 ? 'grabbing' :
+      this._hoverPendIdx >= 0 ? 'grab' : 'default';
+  }
+
+  _onMouseDown(e) {
+    const idx = this._hitTestPivots(this._mouseX, this._mouseY);
+    if (idx >= 0) {
+      this._dragPendIdx = idx;
+      const pend = this.orch.pends[idx];
+      pend.mouseDragging = true;
+      pend.mouseOriginX = pend.originX;
+      pend.mouseOriginY = pend.originY;
+      this.canvas.style.cursor = 'grabbing';
+    }
+  }
+
+  _onMouseUp(e) {
+    if (this._dragPendIdx >= 0) {
+      this.orch.pends[this._dragPendIdx].mouseDragging = false;
+      this._dragPendIdx = -1;
+      this.canvas.style.cursor = this._hoverPendIdx >= 0 ? 'grab' : 'default';
+    }
   }
 
   resize() {
@@ -88,13 +184,22 @@ class Renderer {
     ctx.fillText('Double Pendulum Ballet', ox + 10, oy + 32);
     ctx.fillStyle = '#555';
     ctx.font = '9px monospace';
-    ctx.fillText('Swivel pivots moved by brain (cart-pole) — Lagrangian + RK4, elbow motor only', ox + 10, oy + 44);
+    const anyDrag = this.orch.pends.some(p => p.mouseDragging);
+    ctx.fillText(
+      anyDrag
+        ? '\u{1F3AF} Mouse controlling pivot — drag to sling!  Brain resumes on release.'
+        : 'Brain moves pivots (cart-pole) — click & drag a pivot to take manual control',
+      ox + 10, oy + 44
+    );
 
     const cx = ox + w / 2;
     const cy = oy + h * 0.45;
     const scale = Math.min(w, h) * 0.16;
     const offsets = [-w * 0.22, w * 0.22];
     const colors = [['#ff6b6b', '#ff8787', '#ffa8a850'], ['#74c0fc', '#91d5ff', '#b2e0ff50']];
+
+    // Cache panel geometry for mouse hit-testing
+    this._pendPanelGeom = { ox, oy, w, h, cx, cy, scale, offsets };
 
     for (let p = 0; p < this.orch.pends.length; p++) {
       const pend = this.orch.pends[p];
@@ -156,14 +261,35 @@ class Renderer {
       ctx.lineWidth = 1;
       ctx.stroke();
       // Swivel ring — free pivot (no motor at grip joint)
+      // Highlight when hovering / dragging
+      const isHover = (this._hoverPendIdx === p);
+      const isDrag  = (this._dragPendIdx === p);
+      if (isDrag) {
+        // Pulsing glow while dragging
+        ctx.beginPath();
+        ctx.arc(pivotX, pivotY, 14, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,200,50,0.25)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(pivotX, pivotY, 8, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffd43b';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (isHover) {
+        ctx.beginPath();
+        ctx.arc(pivotX, pivotY, 12, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,200,50,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
       ctx.beginPath();
       ctx.arc(pivotX, pivotY, 5, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.strokeStyle = isDrag ? '#ffd43b' : 'rgba(255,255,255,0.6)';
       ctx.lineWidth = 1.5;
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(pivotX, pivotY, 2, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = isDrag ? '#ffd43b' : '#fff';
       ctx.fill();
 
       // Joint 1
