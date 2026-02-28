@@ -1,0 +1,50 @@
+# Recursive BDH + DLINOSS Constellation Configuration
+
+constellation:
+  num_bdh_nodes: 20
+  num_dlinoss_nodes: 5
+  state_dim: 32
+  ba_attachment: 3          # Barabási-Albert attachment parameter
+
+bdh:
+  n_layer: 1
+  n_embd: 32
+  n_head: 2
+  mlp_internal_dim_multiplier: 4
+  dropout: 0.0
+  buffer_len: 8
+
+dlinoss:
+  state_dim: 32
+  hidden_dim: 32
+  damping_range: [0.1, 2.0]
+  freq_range: [0.5, 8.0]
+  dt_init: 0.05
+
+pendulum:
+  num_pendulums: 2
+  l1: 1.0
+  l2: 0.8
+  m1: 1.5
+  m2: 1.0
+  gravity: 9.81
+  sim_dt: 0.005
+  damping: 0.02
+
+orchestrator:
+  coupling_strength: 0.5
+  firing_threshold: 0.3
+  hebbian_lr: 0.001
+  noise_scale: 0.02
+  internal_steps: 2
+  chaos_factor: 0.1
+
+visualization:
+  update_interval_ms: 50       # ~20 fps
+  trail_length: 200
+  colormap: "plasma"
+  bg_style: "dark_background"
+
+tensorboard:
+  log_dir: "runs"
+  log_interval: 10
