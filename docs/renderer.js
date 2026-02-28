@@ -539,7 +539,11 @@ class Renderer {
 
     // --- Bottom 55%: spectrum bars ---
     const sy = meterY + meterH + 14;
-    const sh = h - (sy - oy) - 4;
+    const sh = h - (sy - oy) - 12;
+
+    // Spectrum background
+    ctx.fillStyle = '#0d0d18';
+    ctx.fillRect(ox + pad - 2, sy - 12, w - pad * 2 + 4, sh + 18);
 
     if (orch.specMagnitudes && orch.specMagnitudes[0] && orch.specMagnitudes[0].length > 0) {
       const halfW = (w - pad * 3) / 2;
@@ -551,6 +555,10 @@ class Renderer {
       // Tip spectrum (avg of channels 4-7)
       this._drawSpectrumBars(ctx, ox + pad * 2 + halfW, sy, halfW, sh,
         orch.specMagnitudes, 4, 8, '#ff922b', 'Tip FFT');
+    } else {
+      ctx.fillStyle = '#555';
+      ctx.font = '9px monospace';
+      ctx.fillText('waiting for FFT data...', ox + pad, sy + sh / 2);
     }
     ctx.restore();
   }
@@ -572,12 +580,19 @@ class Renderer {
       if (avg[b] > maxMag) maxMag = avg[b];
     }
 
+    // Baseline
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(ox, oy + h); ctx.lineTo(ox + w, oy + h);
+    ctx.stroke();
+
     // Draw bars
     for (let b = 0; b < nBins; b++) {
       const v = avg[b] / maxMag;
-      const bh2 = v * h * 0.85;
+      const bh2 = Math.max(v * h * 0.85, 1.5); // minimum visible height
       ctx.fillStyle = color;
-      ctx.globalAlpha = 0.25 + 0.75 * v;
+      ctx.globalAlpha = 0.4 + 0.6 * v;
       ctx.fillRect(ox + b * barW, oy + h - bh2, Math.max(barW - 0.5, 1), bh2);
     }
     ctx.globalAlpha = 1;
