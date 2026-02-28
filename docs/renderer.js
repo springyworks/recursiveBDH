@@ -49,19 +49,20 @@ class Renderer {
     if (this.waterfallData.length > this.maxWaterfall)
       this.waterfallData.shift();
 
-    // Panel divisions — bigger phase portrait, balanced layout
+    // Panel divisions — 5 bottom panels including learning/spectrum
     const midX = W * 0.5;
-    const midY = H * 0.55;
+    const midY = H * 0.50;
     const bh = H - midY;
-    const pw0 = W * 0.27, pw1 = W * 0.23, pw2 = W * 0.32, pw3 = W * 0.18;
+    const pw0 = W * 0.15, pw1 = W * 0.15, pw2 = W * 0.30, pw3 = W * 0.24, pw4 = W * 0.16;
 
     // Draw panels
     this._drawPendulums(ctx, 0, 0, midX, midY);
     this._drawConstellation(ctx, midX, 0, W - midX, midY);
     this._drawEnergy(ctx, 0, midY, pw0, bh);
     this._drawPhasePortrait(ctx, pw0, midY, pw1, bh);
-    this._drawWaterfall(ctx, pw0 + pw1, midY, pw2, bh);
-    this._drawPulseRates(ctx, pw0 + pw1 + pw2, midY, pw3, bh);
+    this._drawLearningSpectrum(ctx, pw0 + pw1, midY, pw2, bh);
+    this._drawWaterfall(ctx, pw0 + pw1 + pw2, midY, pw3, bh);
+    this._drawPulseRates(ctx, pw0 + pw1 + pw2 + pw3, midY, pw4, bh);
 
     // Panel borders
     ctx.strokeStyle = '#1a1a2a';
@@ -72,6 +73,7 @@ class Renderer {
     ctx.strokeRect(pw0, midY, pw1, bh);
     ctx.strokeRect(pw0 + pw1, midY, pw2, bh);
     ctx.strokeRect(pw0 + pw1 + pw2, midY, pw3, bh);
+    ctx.strokeRect(pw0 + pw1 + pw2 + pw3, midY, pw4, bh);
   }
 
   _drawPendulums(ctx, ox, oy, w, h) {
@@ -84,6 +86,9 @@ class Renderer {
     ctx.fillStyle = '#ff6b6b';
     ctx.font = '12px monospace';
     ctx.fillText('Double Pendulum Ballet', ox + 10, oy + 32);
+    ctx.fillStyle = '#555';
+    ctx.font = '9px monospace';
+    ctx.fillText('Swivel pivots moved by brain (cart-pole) — Lagrangian + RK4, elbow motor only', ox + 10, oy + 44);
 
     const cx = ox + w / 2;
     const cy = oy + h * 0.45;
@@ -150,8 +155,14 @@ class Renderer {
       ctx.strokeStyle = 'rgba(255,255,255,0.5)';
       ctx.lineWidth = 1;
       ctx.stroke();
+      // Swivel ring — free pivot (no motor at grip joint)
       ctx.beginPath();
-      ctx.arc(pivotX, pivotY, 3, 0, Math.PI * 2);
+      ctx.arc(pivotX, pivotY, 5, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(pivotX, pivotY, 2, 0, Math.PI * 2);
       ctx.fillStyle = '#fff';
       ctx.fill();
 
@@ -185,6 +196,9 @@ class Renderer {
     ctx.fillStyle = '#51cf66';
     ctx.font = '12px monospace';
     ctx.fillText('BDH+DLINOSS Constellation', ox + 10, oy + 18);
+    ctx.fillStyle = '#555';
+    ctx.font = '9px monospace';
+    ctx.fillText('Scale-free graph: circles=BDH, diamonds=DLinOSS, glow=hubs', ox + 10, oy + 30);
 
     const c = this.orch.const;
     const cx = ox + w / 2, cy = oy + h / 2 + 10;
@@ -276,6 +290,9 @@ class Renderer {
     ctx.fillStyle = '#ff922b';
     ctx.font = '10px monospace';
     ctx.fillText('System Energy', ox + 8, oy + 14);
+    ctx.fillStyle = '#555';
+    ctx.font = '8px monospace';
+    ctx.fillText('orange=constellation, red/blue=pendulums', ox + 8, oy + 24);
 
     const pad = 20;
     const gx = ox + pad, gy = oy + 22;
@@ -306,6 +323,9 @@ class Renderer {
     ctx.fillStyle = '#74c0fc';
     ctx.font = '10px monospace';
     ctx.fillText('Hub Phase Portrait', ox + 8, oy + 14);
+    ctx.fillStyle = '#555';
+    ctx.font = '8px monospace';
+    ctx.fillText('2D projection of hub node activations', ox + 8, oy + 24);
 
     const c = this.orch.const;
     const cxp = ox + w / 2, cyp = oy + h / 2 + 8;
@@ -359,6 +379,9 @@ class Renderer {
     ctx.fillStyle = '#ffd43b';
     ctx.font = '10px monospace';
     ctx.fillText('Node Activations', ox + 8, oy + 14);
+    ctx.fillStyle = '#555';
+    ctx.font = '8px monospace';
+    ctx.fillText('Waterfall: time → × node, brighter=more active', ox + 8, oy + 24);
 
     const data = this.waterfallData;
     if (data.length < 2) { ctx.restore(); return; }
@@ -393,6 +416,9 @@ class Renderer {
     ctx.fillStyle = '#20c997';
     ctx.font = '10px monospace';
     ctx.fillText('Pulse Rates', ox + 8, oy + 14);
+    ctx.fillStyle = '#555';
+    ctx.font = '8px monospace';
+    ctx.fillText('Firing frequency per node (green=BDH, pink=DLinOSS)', ox + 8, oy + 24);
 
     const c = this.orch.const;
     const pad = 8;
@@ -412,6 +438,159 @@ class Renderer {
       );
     }
     ctx.restore();
+  }
+
+  _drawLearningSpectrum(ctx, ox, oy, w, h) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(ox, oy, w, h);
+    ctx.clip();
+
+    ctx.fillStyle = '#e599f7';
+    ctx.font = '10px monospace';
+    ctx.fillText('Learning & Spectrum', ox + 8, oy + 14);
+    ctx.fillStyle = '#555';
+    ctx.font = '8px monospace';
+    ctx.fillText('reward trend + FFT of grip/tip (DC removed)', ox + 8, oy + 24);
+
+    const orch = this.orch;
+    const pad = 8;
+
+    // --- Top 35%: reward curve ---
+    const rh = (h - 30) * 0.35;
+    const ry = oy + 28;
+
+    if (orch.rewardHist && orch.rewardHist.length > 1) {
+      const data = orch.rewardHist;
+      let min = -1, max = 1;
+      for (const v of data) { if (v < min) min = v; if (v > max) max = v; }
+      const range = max - min || 1;
+
+      // Zero line
+      const zeroY = ry + rh - ((0 - min) / range) * rh;
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ox + pad, zeroY); ctx.lineTo(ox + w - pad, zeroY);
+      ctx.stroke();
+
+      // Raw reward (faint dots)
+      if (orch.rawRewardHist && orch.rawRewardHist.length > 1) {
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        const raw = orch.rawRewardHist;
+        for (let i = 0; i < raw.length; i++) {
+          const px = ox + pad + (i / (raw.length - 1)) * (w - pad * 2);
+          const py = ry + rh - ((raw[i] - min) / range) * rh;
+          ctx.fillRect(px - 0.5, py - 0.5, 1.5, 1.5);
+        }
+      }
+
+      // EMA reward line
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const px = ox + pad + (i / (data.length - 1)) * (w - pad * 2);
+        const py = ry + rh - ((data[i] - min) / range) * rh;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      const lastR = data[data.length - 1];
+      ctx.strokeStyle = lastR > 0 ? '#51cf66' : '#ff6b6b';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Weight delta (gradient proxy) — thin yellow line
+      if (orch.weightDeltaHist && orch.weightDeltaHist.length > 1) {
+        const wd = orch.weightDeltaHist;
+        let wdMin = Infinity, wdMax = 0;
+        for (const v of wd) { if (v < wdMin) wdMin = v; if (v > wdMax) wdMax = v; }
+        const wdR = wdMax - wdMin || 1;
+        ctx.beginPath();
+        for (let i = 0; i < wd.length; i++) {
+          const px = ox + pad + (i / (wd.length - 1)) * (w - pad * 2);
+          const py = ry + rh - ((wd[i] - wdMin) / wdR) * rh * 0.8;
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.strokeStyle = '#ffd43b';
+        ctx.lineWidth = 0.8;
+        ctx.globalAlpha = 0.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      // Labels
+      ctx.fillStyle = lastR > 0 ? '#51cf66' : '#ff6b6b';
+      ctx.font = '8px monospace';
+      ctx.fillText(`reward: ${lastR.toFixed(3)}`, ox + pad, ry + 10);
+      ctx.fillStyle = '#ffd43b';
+      ctx.fillText('|\u0394w|', ox + w - 35, ry + 10);
+    }
+
+    // --- Erratic meter bar ---
+    const meterY = ry + rh + 4;
+    const meterH = 6;
+    ctx.fillStyle = '#111';
+    ctx.fillRect(ox + pad, meterY, w - pad * 2, meterH);
+    const ei = orch.erraticIndex || 0;
+    const meterW = Math.min(1, ei) * (w - pad * 2);
+    ctx.fillStyle = ei > 0.5 ? '#ff6b6b' : ei > 0.3 ? '#ffd43b' : '#51cf66';
+    ctx.fillRect(ox + pad, meterY, meterW, meterH);
+    ctx.fillStyle = '#888';
+    ctx.font = '7px monospace';
+    ctx.fillText(`erratic: ${(ei * 100).toFixed(0)}%  damp: ${((orch._erraticDamp || 1) * 100).toFixed(0)}%`, ox + pad, meterY + meterH + 9);
+
+    // --- Bottom 55%: spectrum bars ---
+    const sy = meterY + meterH + 14;
+    const sh = h - (sy - oy) - 4;
+
+    if (orch.specMagnitudes && orch.specMagnitudes[0] && orch.specMagnitudes[0].length > 0) {
+      const halfW = (w - pad * 3) / 2;
+
+      // Grip spectrum (avg of channels 0-3)
+      this._drawSpectrumBars(ctx, ox + pad, sy, halfW, sh,
+        orch.specMagnitudes, 0, 4, '#74c0fc', 'Grip FFT');
+
+      // Tip spectrum (avg of channels 4-7)
+      this._drawSpectrumBars(ctx, ox + pad * 2 + halfW, sy, halfW, sh,
+        orch.specMagnitudes, 4, 8, '#ff922b', 'Tip FFT');
+    }
+    ctx.restore();
+  }
+
+  _drawSpectrumBars(ctx, ox, oy, w, h, specs, chStart, chEnd, color, label) {
+    const N = specs[0].length; // N/2 bins
+    const nBins = Math.min(N - 1, Math.floor(w / 2));
+    if (nBins < 1) return;
+    const barW = w / nBins;
+
+    // Average magnitudes across channels, skip bin 0 (DC)
+    let maxMag = 0.001;
+    const avg = new Float32Array(nBins);
+    for (let b = 0; b < nBins; b++) {
+      for (let ch = chStart; ch < chEnd; ch++) {
+        avg[b] += specs[ch][b + 1];
+      }
+      avg[b] /= (chEnd - chStart);
+      if (avg[b] > maxMag) maxMag = avg[b];
+    }
+
+    // Draw bars
+    for (let b = 0; b < nBins; b++) {
+      const v = avg[b] / maxMag;
+      const bh2 = v * h * 0.85;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.25 + 0.75 * v;
+      ctx.fillRect(ox + b * barW, oy + h - bh2, Math.max(barW - 0.5, 1), bh2);
+    }
+    ctx.globalAlpha = 1;
+
+    // Label
+    ctx.fillStyle = color;
+    ctx.font = '8px monospace';
+    ctx.fillText(label, ox, oy - 2);
+    // Frequency axis hint
+    ctx.fillStyle = '#444';
+    ctx.font = '7px monospace';
+    ctx.fillText('lo', ox, oy + h + 8);
+    ctx.fillText('hi', ox + w - 10, oy + h + 8);
   }
 
   _plotLine(ctx, x, y, w, h, data, color) {

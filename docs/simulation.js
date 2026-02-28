@@ -27,6 +27,37 @@ function addScaled(out, a, b, s, n) {
 function clamp(x, lo, hi) { return x < lo ? lo : x > hi ? hi : x; }
 function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
 
+// Cooley-Tukey radix-2 FFT in-place (re, im are Float32Arrays of length n)
+function fft(re, im, n) {
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    while (j & bit) { j ^= bit; bit >>= 1; }
+    j ^= bit;
+    if (i < j) {
+      let t = re[i]; re[i] = re[j]; re[j] = t;
+      t = im[i]; im[i] = im[j]; im[j] = t;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1;
+    const ang = -2 * Math.PI / len;
+    const wR = Math.cos(ang), wI = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let curR = 1, curI = 0;
+      for (let j = 0; j < half; j++) {
+        const uR = re[i+j], uI = im[i+j];
+        const vR = re[i+j+half]*curR - im[i+j+half]*curI;
+        const vI = re[i+j+half]*curI + im[i+j+half]*curR;
+        re[i+j] = uR + vR; im[i+j] = uI + vI;
+        re[i+j+half] = uR - vR; im[i+j+half] = uI - vI;
+        const tmpR = curR*wR - curI*wI;
+        curI = curR*wI + curI*wR;
+        curR = tmpR;
+      }
+    }
+  }
+}
+
 // ============================================================
 // BDH Node — simplified continuous dynamics
 // ============================================================
@@ -138,7 +169,8 @@ class DLinOSSNode {
     this.nodeId = nodeId;
     // SSM parameters
     this.A = new Float32Array(dim);
-    this.G = new Float32Array(dim);
+    this.G = new Float32Array(dim);  // learnable damping per dimension
+    this.G_grad = new Float32Array(dim); // accumulated gradient for G
     this.dt_raw = new Float32Array(dim);
     this.B = randnArr(dim * dim, 1 / Math.sqrt(dim));
     this.C = randnArr(dim * dim, 1 / Math.sqrt(dim));
@@ -173,14 +205,17 @@ class DLinOSSNode {
       Bu[i] = s;
     }
 
-    // Damped IMEX1 recurrence
+    // Damped IMEX1 recurrence with learnable G
     for (let i = 0; i < d; i++) {
       const dt = sigmoid(this.dt_raw[i]);
       const A = Math.max(0, this.A[i]);
       const G_val = Math.max(0, this.G[i]);
       const S = 1.0 + dt * G_val;
-      const z_new = (this.z_state[i] + dt * (-A * this.x_state[i] + Bu[i])) / S;
+      const z_old = this.z_state[i];
+      const z_new = (z_old + dt * (-A * this.x_state[i] + Bu[i])) / S;
       const x_new = this.x_state[i] + dt * z_new;
+      // Gradient of z w.r.t. G: d(z_new)/d(G) = -dt * z_new / S
+      this.G_grad[i] = 0.9 * this.G_grad[i] + 0.1 * (-dt * z_new / S) * z_new;
       this.z_state[i] = z_new;
       this.x_state[i] = x_new;
     }
@@ -210,63 +245,85 @@ class DoublePendulum {
     this.id = id;
     this.l1 = l1; this.l2 = l2;
     this.m1 = m1; this.m2 = m2;
-    this.g = 9.81; this.damping = 0.02;
-    this.state = [Math.PI / 2 + 0.3 * id, Math.PI / 2 - 0.2 * id, 0, 0];
+    this.g = 9.81; this.damping = 0.005; this.baseDamping = 0.005;
+    // Start near inverted (π = balanced on top) with small perturbation
+    this.state = [Math.PI + 0.15 * (id - 0.5), Math.PI + 0.1 * (0.5 - id), 0, 0];
 
     this.trailX = []; this.trailY = [];
-    this.maxTrail = 250;
+    this.maxTrail = 300;
     this.energy = 0;
 
-    // Moving origin (pivot point), controlled by the brain
+    // Moving origin = mechanical grab point (pivot location in world space)
     this.originX = 0;
     this.originY = 0;
+    this.prevOriginX = 0;
+    this.prevOriginY = 0;
     this.originVX = 0;
     this.originVY = 0;
     this.originAX = 0;
     this.originAY = 0;
-    this.originRange = 1.2; // max offset in physics units
+    this.originRange = 1.5;
   }
 
   setOrigin(targetX, targetY, dt) {
-    const smooth = 0.15;
+    // Responsive tracking — the brain can swing hard
+    const smooth = 0.25;
     const newX = this.originX + smooth * (targetX - this.originX);
     const newY = this.originY + smooth * (targetY - this.originY);
-    const safeDt = Math.max(dt, 0.001);
-    const newVX = (newX - this.originX) / safeDt;
-    const newVY = (newY - this.originY) / safeDt;
-    this.originAX = clamp((newVX - this.originVX) / safeDt, -50, 50);
-    this.originAY = clamp((newVY - this.originVY) / safeDt, -50, 50);
+    const safeDt = Math.max(dt, 0.0005);
+    const newVX = (newX - this.prevOriginX) / safeDt;
+    const newVY = (newY - this.prevOriginY) / safeDt;
+    this.originAX = clamp((newVX - this.originVX) / safeDt, -200, 200);
+    this.originAY = clamp((newVY - this.originVY) / safeDt, -200, 200);
+    this.prevOriginX = this.originX;
+    this.prevOriginY = this.originY;
     this.originVX = newVX;
     this.originVY = newVY;
     this.originX = newX;
     this.originY = newY;
   }
 
+  // Full Lagrangian with non-inertial pivot acceleration
+  // θ measured from straight-DOWN: θ=0 hanging, θ=π inverted (balanced)
+  // Pivot acceleration (ax,ay) creates pseudo-forces on the pendulum
   derivatives(s, tau1, tau2) {
     const [t1, t2, w1, w2] = s;
     const { m1, m2, l1, l2, g, damping: b, originAX: ax, originAY: ay } = this;
     const delta = t2 - t1;
     const cd = Math.cos(delta), sd = Math.sin(delta);
-    let den1 = (m1 + m2) * l1 - m2 * l1 * cd * cd;
-    let den2 = (l2 / l1) * den1;
-    den1 = den1 > 0 ? Math.max(den1, 1e-8) : Math.min(den1, -1e-8);
-    den2 = den2 > 0 ? Math.max(den2, 1e-8) : Math.min(den2, -1e-8);
 
-    // Pivot acceleration modifies effective gravity:
-    // g*sin(θ) → (g+ay)*sin(θ) + ax*cos(θ)
-    const gs1 = (g + ay) * Math.sin(t1) + ax * Math.cos(t1);
-    const gs2 = (g + ay) * Math.sin(t2) + ax * Math.cos(t2);
+    // Mass matrix determinant
+    const M = (m1 + m2) * l1 - m2 * l1 * cd * cd;
+    const safeM = Math.abs(M) < 1e-6 ? (M >= 0 ? 1e-6 : -1e-6) : M;
 
-    const dw1 = (m2 * l1 * w1 * w1 * sd * cd + m2 * gs2 * cd
-      + m2 * l2 * w2 * w2 * sd - (m1 + m2) * gs1 - b * w1 + tau1) / den1;
-    const dw2 = (-m2 * l2 * w2 * w2 * sd * cd + (m1 + m2) * gs1 * cd
-      - (m1 + m2) * l1 * w1 * w1 * sd - (m1 + m2) * gs2 - b * w2 + tau2) / den2;
+    // Non-inertial pseudo-forces from pivot grab-point acceleration
+    // In y-down convention: (g - ay)*sin(θ) - ax*cos(θ)
+    const effG1 = (g - ay) * Math.sin(t1) - ax * Math.cos(t1);
+    const effG2 = (g - ay) * Math.sin(t2) - ax * Math.cos(t2);
+
+    const dw1 = (
+      m2 * l1 * w1 * w1 * sd * cd
+      + m2 * effG2 * cd
+      + m2 * l2 * w2 * w2 * sd
+      - (m1 + m2) * effG1
+      - b * w1 + tau1
+    ) / safeM;
+
+    const den2 = (l2 / l1) * safeM;
+    const dw2 = (
+      -m2 * l2 * w2 * w2 * sd * cd
+      + (m1 + m2) * effG1 * cd
+      - (m1 + m2) * l1 * w1 * w1 * sd
+      - (m1 + m2) * effG2
+      - b * w2 + tau2
+    ) / den2;
+
     return [w1, w2, dw1, dw2];
   }
 
   step(dt, tau1 = 0, tau2 = 0) {
-    tau1 = clamp(tau1, -10, 10);
-    tau2 = clamp(tau2, -10, 10);
+    tau1 = clamp(tau1, -15, 15);
+    tau2 = clamp(tau2, -15, 15);
     const s = this.state;
     const k1 = this.derivatives(s, tau1, tau2);
     const s2 = s.map((v, i) => v + 0.5 * dt * k1[i]);
@@ -278,7 +335,14 @@ class DoublePendulum {
     for (let i = 0; i < 4; i++) {
       this.state[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
     }
-    // Trail
+    // Wrap angles to [-π, π]
+    this.state[0] = ((this.state[0] + 3*Math.PI) % (2*Math.PI)) - Math.PI;
+    this.state[1] = ((this.state[1] + 3*Math.PI) % (2*Math.PI)) - Math.PI;
+    // Clamp angular velocities for stability
+    this.state[2] = clamp(this.state[2], -30, 30);
+    this.state[3] = clamp(this.state[3], -30, 30);
+
+    // Trail (tip of second arm in world coords)
     const pos = this.getPositions();
     this.trailX.push(pos[2]); this.trailY.push(pos[3]);
     if (this.trailX.length > this.maxTrail) {
@@ -569,8 +633,33 @@ class Orchestrator {
     this.chaos = 0.1;
     this.simDt = 0.005;
     this.internalSteps = 2;
-    this.originRange = 1.2;
+    this.originRange = 1.5;
     this.originGain = 3.0;
+    this.adrenaline = 0.5; // energy input model [0..2]
+    this.pendMass = 1.5;
+    this.pendDamping = 0.005;
+
+    // Spectral analysis: 8 channels × 128 samples
+    // Channels: grip_x0, grip_y0, grip_x1, grip_y1, tip_x0, tip_y0, tip_x1, tip_y1
+    this.fftLen = 128;
+    this.specBufIdx = 0;
+    this.specBuffers = Array.from({ length: 8 }, () => new Float32Array(128));
+    this.specMagnitudes = Array.from({ length: 8 }, () => new Float32Array(64));
+    this.specLabels = ['Grip₀X','Grip₀Y','Grip₁X','Grip₁Y','Tip₀X','Tip₀Y','Tip₁X','Tip₁Y'];
+
+    // Learning metrics
+    this.rewardHist = [];
+    this.rewardEMA = 0;
+    this.rawRewardHist = [];
+    this.maxRewardHist = 400;
+    this.erraticIndex = 0;
+    this._erraticDamp = 1.0;
+
+    // Weight-change magnitude tracker (proxy for "loss")
+    this.weightDeltaHist = [];
+
+    // Hub autoscaling: track running magnitude of hub outputs
+    this.hubScale = 1.0;
   }
 
   step() {
@@ -578,15 +667,23 @@ class Orchestrator {
     const d = this.dim;
     const hubs = this.const.hubIds;
 
-    // 1. Inject pendulum states + task + feedback into hub nodes
+    // 1. Apply mass/damping from sliders to pendulums
+    for (const pend of this.pends) {
+      pend.m1 = this.pendMass;
+      pend.m2 = this.pendMass * 0.667;
+      pend.baseDamping = this.pendDamping;
+    }
+
+    // 2. Inject pendulum states + task + feedback into hub nodes
+    const adrScale = 0.5 + this.adrenaline; // 0.5 .. 2.5
     for (let p = 0; p < this.pends.length; p++) {
       const ps = this.pends[p].state;
       const signal = zeros(d);
       for (let i = 0; i < d; i++) {
         let s = 0;
         for (let j = 0; j < 4; j++) s += this.pendToNode[j * d + i] * ps[j];
-        signal[i] = s * 0.5;
-        if (this.taskActive) signal[i] += this.taskEncoder[i] * 0.3;
+        signal[i] = s * 0.5 * adrScale;
+        if (this.taskActive) signal[i] += this.taskEncoder[i] * 0.3 * adrScale;
         signal[i] += this.feedbackEncoder[i] * this.feedbackValue * 0.2;
       }
       const ha = hubs[p * 2];
@@ -595,12 +692,14 @@ class Orchestrator {
       this.const.inject(hb, signal);
     }
 
-    // 2. Internal constellation steps
+    // 3. Internal constellation steps
     for (let s = 0; s < this.internalSteps; s++) {
-      this.const.step(this.coupling, this.threshold, this.noise, this.chaos);
+      this.const.step(this.coupling, this.threshold, this.noise * adrScale, this.chaos);
     }
 
-    // 3. Read hub outputs → origin offsets + torques → physics
+    // 4. Read hub outputs → origin offsets + torques → physics
+    //    Autoscaling: normalise combined hub vector so projections stay in useful range
+    //    Swivel joint: tau1 = 0 (free pivot at grip); only tau2 (elbow motor)
     for (let p = 0; p < this.pends.length; p++) {
       const ha = hubs[p * 2];
       const hb = hubs[Math.min(p * 2 + 1, hubs.length - 1)];
@@ -609,16 +708,24 @@ class Orchestrator {
         combined[i] = (this.const.outputs[ha][i] + this.const.outputs[hb][i]) * 0.5;
       }
 
+      // --- Hub autoscaling: track EMA of output magnitude, normalise ---
+      let cNorm = 0;
+      for (let i = 0; i < d; i++) cNorm += combined[i] * combined[i];
+      cNorm = Math.sqrt(cNorm) + 1e-8;
+      this.hubScale = 0.98 * this.hubScale + 0.02 * cNorm;
+      const invScale = 1.0 / Math.max(this.hubScale, 0.01);
+      for (let i = 0; i < d; i++) combined[i] *= invScale;
+
       // Project to origin offsets
       let ox = 0, oy = 0;
       for (let i = 0; i < d; i++) {
         ox += this.nodeToOrigin[i * 4 + p * 2] * combined[i];
         oy += this.nodeToOrigin[i * 4 + p * 2 + 1] * combined[i];
       }
-      ox = Math.tanh(ox * this.originGain) * this.originRange;
-      oy = Math.tanh(oy * this.originGain) * this.originRange;
+      ox = Math.tanh(ox * this.originGain) * this.originRange * this._erraticDamp;
+      oy = Math.tanh(oy * this.originGain) * this.originRange * this._erraticDamp;
 
-      // Update eligibility traces
+      // Update eligibility traces (origin)
       for (let i = 0; i < d; i++) {
         this.originTrace[i * 4 + p * 2] =
           this.traceDecay * this.originTrace[i * 4 + p * 2]
@@ -631,34 +738,39 @@ class Orchestrator {
       // Move the pendulum pivot (physics acceleration effects)
       this.pends[p].setOrigin(ox, oy, this.simDt);
 
-      // Project to small torques
-      let tau1 = 0, tau2 = 0;
+      // Elbow torque only — first joint is a free swivel (no motor)
+      let tau2 = 0;
       for (let i = 0; i < d; i++) {
-        tau1 += this.nodeTorque[i * 2] * combined[i];
         tau2 += this.nodeTorque[i * 2 + 1] * combined[i];
       }
-      tau1 *= 0.5; tau2 *= 0.5;
+      tau2 *= 0.5 * adrScale;
 
+      // Eligibility trace for tau2
       for (let i = 0; i < d; i++) {
-        this.torqueTrace[i * 2] =
-          this.traceDecay * this.torqueTrace[i * 2]
-          + (1 - this.traceDecay) * combined[i] * tau1;
         this.torqueTrace[i * 2 + 1] =
           this.traceDecay * this.torqueTrace[i * 2 + 1]
           + (1 - this.traceDecay) * combined[i] * tau2;
       }
 
-      // Sub-step pendulum physics
+      // Sub-step pendulum physics (tau1 = 0: free swivel at grip)
       const nsub = 4, subDt = this.simDt / nsub;
       for (let ss = 0; ss < nsub; ss++) {
-        this.pends[p].step(subDt, tau1, tau2);
+        this.pends[p].step(subDt, 0, tau2);
       }
     }
 
-    // 4. Continuous learning
+    // 5. Spectral analysis & erratic prevention
+    this._recordSpecSamples();
+    if (this.tick % 16 === 0) this._computeSpectra();
+    this._updateErraticDamping();
+
+    // 6. Continuous learning (adrenaline scales LR)
     this._learnFromReward();
 
-    // 5. Metrics
+    // 7. Learn DLinOSS damping
+    this._learnDLinOSSDamping();
+
+    // 8. Metrics
     this._recordMetrics();
   }
 
@@ -681,7 +793,7 @@ class Orchestrator {
     }
     if (Math.abs(reward) < 0.01) return;
 
-    const lr = 0.0003 * reward;
+    const lr = 0.0003 * reward * (0.5 + this.adrenaline);
     const d = this.dim;
 
     // Update origin projection weights
@@ -697,6 +809,83 @@ class Orchestrator {
     // Modulate constellation Hebbian learning
     if (reward > 0) {
       this.const._hebbianUpdate(0.002 * reward);
+    }
+  }
+
+  _learnDLinOSSDamping() {
+    // DLinOSS nodes learn their damping G towards better task reward
+    const reward = this.taskActive ? this._computeTaskReward() : this.feedbackValue;
+    if (Math.abs(reward) < 0.02) return;
+    const lr = 0.0005 * reward * (0.5 + this.adrenaline);
+    for (let n = this.const.nBDH; n < this.const.nTotal; n++) {
+      const node = this.const.nodes[n];
+      for (let i = 0; i < node.dim; i++) {
+        node.G[i] += lr * node.G_grad[i];
+        node.G[i] = clamp(node.G[i], 0.01, 5.0);
+      }
+    }
+  }
+
+  _recordSpecSamples() {
+    const idx = this.specBufIdx;
+    for (let p = 0; p < this.pends.length; p++) {
+      this.specBuffers[p * 2][idx] = this.pends[p].originX;
+      this.specBuffers[p * 2 + 1][idx] = this.pends[p].originY;
+      const pos = this.pends[p].getPositions();
+      this.specBuffers[4 + p * 2][idx] = pos[2];
+      this.specBuffers[4 + p * 2 + 1][idx] = pos[3];
+    }
+    this.specBufIdx = (idx + 1) % this.fftLen;
+  }
+
+  _computeSpectra() {
+    const N = this.fftLen;
+    const re = new Float32Array(N);
+    const im = new Float32Array(N);
+    let totalHF = 0, totalEnergy = 0;
+
+    for (let ch = 0; ch < 8; ch++) {
+      // Unwrap circular buffer
+      for (let i = 0; i < N; i++) {
+        re[i] = this.specBuffers[ch][(this.specBufIdx + i) % N];
+        im[i] = 0;
+      }
+      // DC removal (subtract mean)
+      let mean = 0;
+      for (let i = 0; i < N; i++) mean += re[i];
+      mean /= N;
+      for (let i = 0; i < N; i++) re[i] -= mean;
+      // Hann window
+      for (let i = 0; i < N; i++) {
+        re[i] *= 0.5 * (1 - Math.cos(2 * Math.PI * i / (N - 1)));
+      }
+      fft(re, im, N);
+      // Magnitude spectrum (N/2 bins)
+      for (let i = 0; i < N / 2; i++) {
+        this.specMagnitudes[ch][i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]) / N;
+      }
+      // Erratic metric: ratio of high-freq energy (top 75%) to total
+      for (let i = 1; i < N / 2; i++) {
+        const m2 = this.specMagnitudes[ch][i] * this.specMagnitudes[ch][i];
+        totalEnergy += m2;
+        if (i > N / 8) totalHF += m2;
+      }
+    }
+    this.erraticIndex = totalEnergy > 1e-8 ? totalHF / totalEnergy : 0;
+  }
+
+  _updateErraticDamping() {
+    if (this.erraticIndex > 0.4) {
+      const excess = Math.min(1, (this.erraticIndex - 0.4) / 0.4);
+      this._erraticDamp = 1 - 0.5 * excess;
+      for (const pend of this.pends) {
+        pend.damping = pend.baseDamping + 0.08 * excess;
+      }
+    } else {
+      this._erraticDamp += 0.1 * (1 - this._erraticDamp);
+      for (const pend of this.pends) {
+        pend.damping += 0.2 * (pend.baseDamping - pend.damping);
+      }
     }
   }
 
@@ -718,5 +907,20 @@ class Orchestrator {
       if (this.pendEnergyHist[p].length > this.maxHist)
         this.pendEnergyHist[p].shift();
     }
+
+    // Learning metrics
+    const reward = this._computeTaskReward();
+    this.rewardEMA = 0.98 * this.rewardEMA + 0.02 * reward;
+    this.rewardHist.push(this.rewardEMA);
+    this.rawRewardHist.push(reward);
+    if (this.rewardHist.length > this.maxRewardHist) this.rewardHist.shift();
+    if (this.rawRewardHist.length > this.maxRewardHist) this.rawRewardHist.shift();
+
+    // Weight delta magnitude (proxy for gradient/loss)
+    let wdelta = 0;
+    for (let i = 0; i < this.dim * 4; i++) wdelta += this.originTrace[i] * this.originTrace[i];
+    for (let i = 0; i < this.dim * 2; i++) wdelta += this.torqueTrace[i] * this.torqueTrace[i];
+    this.weightDeltaHist.push(Math.sqrt(wdelta));
+    if (this.weightDeltaHist.length > this.maxRewardHist) this.weightDeltaHist.shift();
   }
 }

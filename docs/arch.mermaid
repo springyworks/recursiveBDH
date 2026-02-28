@@ -1,0 +1,135 @@
+flowchart TB
+    subgraph PHYSICS["PHYSICAL WORLD — Double Pendulum Lagrangian Mechanics"]
+        direction LR
+        P1["Pendulum A\n• θ₁, θ₂ (joint angles)\n• ω₁, ω₂ (angular velocities)\n• RK4 integration\n• Gravity 9.81 m/s²\n• Damping 0.02"]
+        P2["Pendulum B\n• θ₁, θ₂ (joint angles)\n• ω₁, ω₂ (angular velocities)\n• RK4 integration\n• Gravity 9.81 m/s²\n• Damping 0.02"]
+        GRIP1(("Grip A\nOrigin (x,y)\nMechanical\ngrab point"))
+        GRIP2(("Grip B\nOrigin (x,y)\nMechanical\ngrab point"))
+        GRIP1 --- P1
+        GRIP2 --- P2
+    end
+
+    subgraph ORCH["META-BDH ORCHESTRATOR — Brain-to-Body Interface"]
+        direction TB
+        INJECT["State Injection\n• 4D pendulum state → 16D signal\n• pendToNode projection (4×16)\n• Adds task + feedback signals"]
+        ORIGIN["Origin Controller\n• 16D hub output → (x,y) per pendulum\n• nodeToOrigin projection (16×4)\n• tanh(signal × gain) × range\n• Controls mechanical grab points"]
+        TORQUE["Torque Generator\n• 16D hub output → τ₁,τ₂\n• nodeTorque projection (16×2)\n• Small joint torques"]
+        LEARN["Continuous Learning\n• Eligibility traces (γ=0.92)\n• Reward = feedback + task_reward\n• ΔW = lr × reward × trace\n• Updates origin + torque weights"]
+        INJECT --> ORIGIN
+        INJECT --> TORQUE
+        ORIGIN --> LEARN
+        TORQUE --> LEARN
+    end
+
+    subgraph CONSTELLATION["BDH + DLINOSS CONSTELLATION — Barabási-Albert Scale-Free Graph"]
+        direction TB
+
+        subgraph HUBS["HUB NODES — Top-5 by degree, gateway to pendulums"]
+            HUB0["Hub 0 (BDH)\nHighest degree\nPendulum A input"]
+            HUB1["Hub 1 (BDH)\nPendulum A input"]
+            HUB2["Hub 2 (BDH)\nPendulum B input"]
+            HUB3["Hub 3 (BDH)\nPendulum B input"]
+            HUB4["Hub 4 (BDH)\nLowest of top-5"]
+        end
+
+        subgraph BDH_LAYER["BDH NODES 5–19 — Sparse Pulsing Cortical Columns"]
+            BDH5["BDH 5\nEncoder→Gate→Decode\nReLU sparse pulsing\n8-step circular buffer"]
+            BDH6["BDH 6"]
+            BDH7["BDH 7"]
+            BDH8["BDH 8"]
+            BDH9["BDH 9"]
+            BDH10["BDH 10"]
+            BDH11["BDH 11"]
+            BDH12["BDH 12"]
+            BDH13["BDH 13"]
+            BDH14["BDH 14"]
+            BDH15["BDH 15"]
+            BDH16["BDH 16"]
+            BDH17["BDH 17"]
+            BDH18["BDH 18"]
+            BDH19["BDH 19"]
+        end
+
+        subgraph DLINOSS_LAYER["DLINOSS NODES 20–24 — Damped Oscillator SSMs"]
+            DL20["DLinOSS 20\nDamped IMEX1 recurrence\nz' = (z + dt(-Ax+Bu))/(1+dtG)\nx' = x + dt·z'\nOscillatory memory"]
+            DL21["DLinOSS 21"]
+            DL22["DLinOSS 22"]
+            DL23["DLinOSS 23"]
+            DL24["DLinOSS 24"]
+        end
+
+        HUB0 -->|"Hebbian weight\nOja's rule\nw += lr(pre·post − w·post²)"| BDH5
+        HUB0 --> BDH6
+        HUB0 --> BDH7
+        HUB1 --> BDH8
+        HUB1 --> BDH9
+        HUB1 --> DL20
+        HUB2 --> BDH10
+        HUB2 --> BDH11
+        HUB2 --> DL21
+        HUB3 --> BDH12
+        HUB3 --> BDH13
+        HUB3 --> DL22
+        HUB4 --> BDH14
+        HUB4 --> DL23
+        BDH5 --> BDH15
+        BDH6 --> BDH16
+        BDH7 --> BDH17
+        BDH8 --> BDH18
+        BDH9 --> BDH19
+        BDH15 --> DL24
+        BDH16 --> DL20
+        BDH17 --> DL21
+        BDH18 --> DL22
+        BDH19 --> DL23
+        DL20 -->|"Back-edge\ncycle for emergence"| HUB0
+        DL21 --> HUB1
+        DL22 --> HUB2
+        DL23 --> HUB3
+        DL24 --> HUB4
+        BDH10 --> BDH5
+        BDH13 --> BDH8
+    end
+
+    subgraph SIGNALS["SIGNAL FLOW — Sparse Pulse Protocol"]
+        direction LR
+        VCO["VCO Babbling\nsin(2πi/d × (1+0.3n))\n× chaosFactor\nDrives emergence"]
+        NOISE["Gaussian Noise\nN(0, noiseScale)\nExploration signal"]
+        PULSE["Sparse Pulsing Gate\n|activation| > threshold\nonly strong signals pass\nCompresses bandwidth"]
+        HEBBIAN["Hebbian Plasticity\nOja's rule on edges\nw ∈ [0.01, 2.0]\nSelf-organizing weights"]
+    end
+
+    %% Cross-subgraph connections
+    P1 -->|"θ₁,θ₂,ω₁,ω₂\nphysics state"| INJECT
+    P2 -->|"θ₁,θ₂,ω₁,ω₂\nphysics state"| INJECT
+    INJECT -->|"16D encoded signal\ninjected at hub nodes"| HUBS
+    HUBS -->|"hub output\n16D combined"| ORIGIN
+    HUBS -->|"hub output\n16D combined"| TORQUE
+    ORIGIN -->|"target (x,y)\nsmoothed, clamped"| GRIP1
+    ORIGIN -->|"target (x,y)\nsmoothed, clamped"| GRIP2
+    TORQUE -->|"τ₁,τ₂ joint torques\nclamped ±10"| P1
+    TORQUE -->|"τ₁,τ₂ joint torques\nclamped ±10"| P2
+    VCO -->|"periodic drive"| CONSTELLATION
+    NOISE -->|"random exploration"| CONSTELLATION
+
+    subgraph UI["USER INTERFACE — Real-time Control"]
+        direction LR
+        TASK["BALANCE Button\nActivates upright-balancing\ntask reward signal"]
+        AUTO["AUTO Button\nAuto-regulates all sliders\nfor optimal training"]
+        FB["Feedback Slider\n-1 (bad) to +1 (nice)\nHuman reward signal"]
+        SLIDERS["Parameter Sliders\nCoupling, Threshold, Chaos\nNoise, Speed, Origin Gain"]
+    end
+
+    TASK -->|"task signal\n0.3 × taskEncoder"| INJECT
+    FB -->|"reward modulates\nweight updates"| LEARN
+    AUTO -->|"auto-tunes\nall parameters"| SLIDERS
+    SLIDERS -->|"coupling, threshold\nnoise, chaos, gain"| CONSTELLATION
+
+    style PHYSICS fill:#1a0a0a,stroke:#ff6b6b,color:#fff
+    style ORCH fill:#0a1a1a,stroke:#51cf66,color:#fff
+    style CONSTELLATION fill:#0a0a1a,stroke:#74c0fc,color:#fff
+    style SIGNALS fill:#1a1a0a,stroke:#ffd43b,color:#fff
+    style UI fill:#1a0a1a,stroke:#e599f7,color:#fff
+    style HUBS fill:#1a1020,stroke:#ff6b6b,color:#fff
+    style BDH_LAYER fill:#0a1020,stroke:#74c0fc,color:#fff
+    style DLINOSS_LAYER fill:#10100a,stroke:#ffd43b,color:#fff

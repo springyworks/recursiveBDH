@@ -15,8 +15,8 @@ body { background: #0a0a0f; color: #ccc; font-family: 'Segoe UI', monospace; ove
   border-top: 1px solid #222;
   z-index: 10;
 }
-.slider-group { display: flex; align-items: center; gap: 4px; }
-.slider-group label { font-size: 11px; color: #888; min-width: 50px; }
+.slider-group { display: flex; align-items: center; gap: 4px; position: relative; }
+.slider-group label { font-size: 11px; color: #888; min-width: 50px; cursor: help; }
 .slider-group input[type=range] { width: 100px; accent-color: #ff6b6b; height: 28px; }
 .slider-group .val { font-size: 10px; color: #ff6b6b; min-width: 30px; }
 @media (max-width: 800px) {
@@ -24,16 +24,20 @@ body { background: #0a0a0f; color: #ccc; font-family: 'Segoe UI', monospace; ove
   .slider-group label { font-size: 10px; min-width: 40px; }
   .slider-group input[type=range] { width: 70px; height: 32px; }
   .slider-group .val { font-size: 9px; min-width: 24px; }
-  #btn-task { padding: 6px 10px; font-size: 12px; }
+  #btn-task, #btn-auto { padding: 6px 10px; font-size: 12px; }
   #hud { font-size: 9px; }
 }
-#btn-task {
-  background: #1a1a2a; color: #ff922b; border: 1px solid #333;
+#btn-task, #btn-auto {
+  background: #1a1a2a; border: 1px solid #333;
   padding: 4px 14px; cursor: pointer; font-size: 11px; font-weight: bold;
   border-radius: 3px; transition: all 0.2s;
 }
+#btn-task { color: #ff922b; }
 #btn-task:hover { border-color: #ffd43b; }
 #btn-task.active { background: #332800; color: #ffd43b; border-color: #ffd43b; }
+#btn-auto { color: #51cf66; }
+#btn-auto:hover { border-color: #51cf66; }
+#btn-auto.active { background: #0a2a0a; color: #69db7c; border-color: #51cf66; }
 #hud {
   position: fixed; top: 8px; left: 12px;
   font-size: 11px; color: #555; z-index: 10;
@@ -45,6 +49,28 @@ body { background: #0a0a0f; color: #ccc; font-family: 'Segoe UI', monospace; ove
 }
 .gpu-on { background: #1a3a1a; color: #51cf66; border: 1px solid #2a5a2a; }
 .gpu-off { background: #3a1a1a; color: #ff6b6b; border: 1px solid #5a2a2a; }
+/* Info popup tooltip */
+.info-tip {
+  display: inline-block; width: 14px; height: 14px; line-height: 14px;
+  text-align: center; border-radius: 50%; font-size: 9px; font-weight: bold;
+  background: #222; color: #888; border: 1px solid #444; cursor: help;
+  margin-left: 2px; vertical-align: middle; position: relative;
+}
+.info-tip:hover { color: #fff; border-color: #888; }
+.info-tip .tip-text {
+  display: none; position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: #181828; color: #ccc; font-size: 11px; font-weight: normal;
+  padding: 8px 12px; border-radius: 6px; border: 1px solid #444;
+  white-space: normal; width: 220px; text-align: left; z-index: 100;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6); line-height: 1.4;
+  pointer-events: none;
+}
+.info-tip:hover .tip-text { display: block; }
+/* Panel info overlays */
+.panel-info {
+  position: fixed; font-size: 10px; color: #555; z-index: 5;
+  pointer-events: none; font-style: italic;
+}
 </style>
 </head>
 <body>
@@ -58,39 +84,69 @@ body { background: #0a0a0f; color: #ccc; font-family: 'Segoe UI', monospace; ove
     <label>Coupling</label>
     <input type="range" id="sl-coupling" min="0.01" max="2" step="0.01" value="0.5">
     <span class="val" id="v-coupling">0.50</span>
+    <span class="info-tip">?<span class="tip-text">Signal strength between connected nodes in the constellation graph. Higher = stronger inter-node communication, more synchronized activity.</span></span>
   </div>
   <div class="slider-group">
     <label>Threshold</label>
     <input type="range" id="sl-threshold" min="0.01" max="1" step="0.01" value="0.3">
     <span class="val" id="v-threshold">0.30</span>
+    <span class="info-tip">?<span class="tip-text">Sparse pulsing gate. Only activations above this threshold produce pulses. Higher = quieter network, fewer but stronger signals.</span></span>
   </div>
   <div class="slider-group">
     <label>Chaos</label>
     <input type="range" id="sl-chaos" min="0" max="1" step="0.01" value="0.1">
     <span class="val" id="v-chaos">0.10</span>
+    <span class="info-tip">?<span class="tip-text">VCO (voltage-controlled oscillator) babbling amplitude. Adds sinusoidal perturbations to node inputs, encouraging exploration and emergent patterns.</span></span>
   </div>
   <div class="slider-group">
     <label>Noise</label>
     <input type="range" id="sl-noise" min="0" max="0.5" step="0.005" value="0.02">
     <span class="val" id="v-noise">0.020</span>
+    <span class="info-tip">?<span class="tip-text">Random Gaussian noise injected into every node each step. Prevents the network from getting stuck and adds stochastic exploration.</span></span>
   </div>
   <div class="slider-group">
     <label>Speed</label>
     <input type="range" id="sl-speed" min="1" max="10" step="1" value="2">
     <span class="val" id="v-speed">2</span>
+    <span class="info-tip">?<span class="tip-text">Simulation steps per animation frame. Higher = faster simulation time but more CPU load. The physics sub-steps stay accurate via RK4.</span></span>
   </div>
   <div class="slider-group">
     <label style="color: #51cf66;">Org.Gain</label>
     <input type="range" id="sl-origain" min="0.5" max="10" step="0.1" value="3" style="accent-color: #51cf66;">
     <span class="val" id="v-origain" style="color: #51cf66;">3.0</span>
+    <span class="info-tip">?<span class="tip-text">Origin Gain: how aggressively the brain moves the pendulum grab-points. Higher = wilder swinging.</span></span>
+  </div>
+  <div class="slider-group">
+    <label style="color: #e599f7;">Mass</label>
+    <input type="range" id="sl-mass" min="0.2" max="5" step="0.1" value="1.5" style="accent-color: #e599f7;">
+    <span class="val" id="v-mass" style="color: #e599f7;">1.5</span>
+    <span class="info-tip">?<span class="tip-text">Pendulum mass (m1). Heavier = harder to swing, more momentum. The second bob is always 2/3 of this value. AUTO adjusts this too!</span></span>
+  </div>
+  <div class="slider-group">
+    <label style="color: #e599f7;">Damp</label>
+    <input type="range" id="sl-damp" min="0" max="0.2" step="0.001" value="0.005" style="accent-color: #e599f7;">
+    <span class="val" id="v-damp" style="color: #e599f7;">0.005</span>
+    <span class="info-tip">?<span class="tip-text">Joint friction / damping coefficient. Higher = pendulums lose energy faster. At 0 they swing forever. AUTO finds the sweet spot.</span></span>
+  </div>
+  <div class="slider-group">
+    <label style="color: #ff922b;">Adrenaline</label>
+    <input type="range" id="sl-adrenaline" min="0" max="2" step="0.01" value="0.5" style="accent-color: #ff922b; width: 90px;">
+    <span class="val" id="v-adrenaline" style="color: #ff922b;">0.50</span>
+    <span class="info-tip">?<span class="tip-text">Energy injection into the brain. Higher = neurons fire harder, torques are amplified, learning rate scales up. Like caffeine for the constellation! 0 = sleepy brain, 2 = manic.</span></span>
   </div>
   <div class="slider-group" style="border-left: 1px solid #333; padding-left: 8px;">
     <button id="btn-task">BALANCE</button>
+    <span class="info-tip">?<span class="tip-text">Toggle balance task. When active, the constellation brain tries to learn to keep both double pendulums inverted (balanced on top). Uses reward = -cos(&theta;) to drive Hebbian + eligibility-trace learning.</span></span>
+  </div>
+  <div class="slider-group">
+    <button id="btn-auto">AUTO</button>
+    <span class="info-tip">?<span class="tip-text">Auto-regulation mode. When active, the system automatically adjusts Coupling, Threshold, Chaos, Noise, and Org.Gain toward values that maximize the balance reward. Let the brain tune itself!</span></span>
   </div>
   <div class="slider-group" style="flex-grow: 1;">
     <label style="color: #ffd43b;">Feedback</label>
     <input type="range" id="sl-feedback" min="-1" max="1" step="0.01" value="0" style="width: 180px; accent-color: #ffd43b;">
     <span class="val" id="v-feedback" style="color: #ffd43b;">0.00</span>
+    <span class="info-tip">?<span class="tip-text">Human reward signal. Drag left = "bad" (-1), right = "nice" (+1). This directly modulates the learning rate and Hebbian weight updates. The brain learns from your judgment in real-time!</span></span>
   </div>
 </div>
 <script src="simulation.js"></script>

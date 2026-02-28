@@ -2,6 +2,12 @@
 
 A recursive neuromorphic simulation: 20 BDH (Baby Dragon Hatchling) nodes and 5 Damped-LinOSS oscillators wired in a Barabási-Albert scale-free graph. The constellation brain juggles the pivot points of two double pendulums with real physics (Lagrangian + RK4). Continuous Hebbian + reward-based learning from human feedback.
 
+## Architecture
+
+![Architecture Diagram](docs/arch.png)
+
+See [docs/arch.mermaid](docs/arch.mermaid) for the full source.
+
 **Live demo:** [springyworks.github.io/recursiveBDH](https://springyworks.github.io/recursiveBDH/)
 
 ## Run locally
@@ -34,4 +40,7 @@ python main.py
 | **Speed** | Simulation steps per frame |
 | **Org.Gain** | How aggressively the brain moves pendulum pivots |
 | **BALANCE** | Task: try to invert pendulums (balance to top) |
+| **AUTO** | Auto-regulation: the brain tunes all sliders itself |
 | **Feedback** | Human reward signal: left = bad, right = nice |
+
+> Hover the **?** icons next to each control in the web app for detailed explanations.
